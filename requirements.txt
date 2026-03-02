@@ -1,0 +1,75 @@
+# =============================================================================
+# Datacenter Energy Intelligence Platform — Dependencies
+# =============================================================================
+
+# Core Data Engineering
+pandas==2.2.2
+polars==0.20.31
+pyarrow==15.0.2
+duckdb==0.10.2
+numpy==1.26.4
+scipy==1.13.1
+
+# AWS & Storage
+boto3==1.34.131
+s3fs==2024.3.0
+fsspec==2024.3.0
+
+# Streaming
+kafka-python==2.0.2
+confluent-kafka==2.4.0
+
+# Pipeline & Transforms
+dbt-core==1.8.3
+dbt-duckdb==1.8.1
+dbt-postgres==1.8.1
+
+# Orchestration
+apache-airflow-client==2.9.0
+
+# Machine Learning
+scikit-learn==1.5.0
+xgboost==2.0.3
+lightgbm==4.3.0
+prophet==1.1.5
+mlflow==2.13.0
+
+# Deep Learning
+torch==2.3.1
+
+# Simulation
+simpy==4.1.1
+
+# Serving
+streamlit==1.36.0
+fastapi==0.111.0
+uvicorn==0.30.1
+pydantic==2.7.4
+
+# Database
+psycopg2-binary==2.9.9
+sqlalchemy==2.0.31
+
+# Data Quality
+great-expectations==0.18.19
+pandera==0.19.3
+
+# Visualization
+plotly==5.22.0
+matplotlib==3.9.0
+seaborn==0.13.2
+
+# Code Quality
+pytest==8.2.2
+pytest-cov==5.0.0
+black==24.4.2
+ruff==0.4.10
+pre-commit==3.7.1
+mypy==1.10.0
+
+# Utilities
+python-dotenv==1.0.1
+pyyaml==6.0.1
+loguru==0.7.2
+httpx==0.27.0
+tqdm==4.66.4

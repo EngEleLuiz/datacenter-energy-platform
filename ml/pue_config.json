@@ -1,0 +1,1 @@
+{"features": ["total_it_power_kw", "avg_cpu_util", "avg_cpu_temp_c", "temp_delta", "avg_ups_soc", "hour", "day_of_week", "is_weekend"], "seq_len": 16, "horizon": 4, "hidden_size": 64}
