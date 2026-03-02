@@ -338,4 +338,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 ---
 
 *Built with ❤️ for the intersection of data engineering and power systems research.*  
-*Florianópolis, SC, Brazil · 2024*
+*Florianópolis, SC, Brazil · 2026*
