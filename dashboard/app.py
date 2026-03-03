@@ -13,6 +13,11 @@ from dataclasses import asdict
 from data_generator.server_simulator import ServerSimulator
 from data_generator.ups_inverter_simulator import UPSSimulator, InverterSimulator
 
+# Ensure project root is in path (for Streamlit Cloud)
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+
 # ── Page config ──────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="Datacenter Energy Intelligence Platform",
