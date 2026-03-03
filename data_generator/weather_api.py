@@ -139,7 +139,6 @@ class WeatherClient:
 
     def get_current(self) -> Optional[WeatherReading]:
         """Returns the WeatherReading closest to the current time."""
-        import math
         import uuid
 
         try:
