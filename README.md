@@ -21,7 +21,8 @@ Universidade Federal de Santa Catarina · Florianópolis, SC, Brazil
 - [License](#license)
 
 ---
-
+The dashboard can be viewed here: https://datacenter-energy-platform-nzqihcuimx7beqlqqfjhmt.streamlit.app/#a416fc4c
+---
 ## Overview
 
 This platform bridges **data engineering** and **power systems research** by building a production-grade observability stack for datacenter microgrid analysis. It simulates, streams, processes, and analyzes telemetry from 100 servers, 4 UPS units, and 4 inverters operating in both Grid-Following (GFL) and Grid-Forming (GFM) control modes.
