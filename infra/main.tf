@@ -118,23 +118,23 @@ resource "aws_glue_catalog_database" "gold" {
 }
 
 # Glue Crawler — auto-discovers schema from Silver Parquet files
-resource "aws_glue_crawler" "silver_crawler" {
-  name          = "${var.project_name}-silver-crawler"
-  role          = aws_iam_role.glue_role.arn
-  database_name = aws_glue_catalog_database.silver.name
-  schedule      = "cron(0/15 * * * ? *)"  # every 15 min
-
-  s3_target {
-    path = "s3://${aws_s3_bucket.silver.bucket}/"
-  }
-
-  schema_change_policy {
-    delete_behavior = "LOG"
-    update_behavior = "UPDATE_IN_DATABASE"
-  }
-
-  tags = local.common_tags
-}
+# resource "aws_glue_crawler" "silver_crawler" {
+#   name          = "${var.project_name}-silver-crawler"
+#   role          = aws_iam_role.glue_role.arn
+#   database_name = aws_glue_catalog_database.silver.name
+#   schedule      = "cron(0/15 * * * ? *)"
+#
+#   s3_target {
+#     path = "s3://${aws_s3_bucket.silver.bucket}/"
+#   }
+#
+#   schema_change_policy {
+#     delete_behavior = "LOG"
+#     update_behavior = "UPDATE_IN_DATABASE"
+#   }
+#
+#   tags = local.common_tags
+# }
 
 # ---------------------------------------------------------------------------
 # Athena — serverless SQL on S3
