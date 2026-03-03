@@ -11,7 +11,7 @@ from __future__ import annotations
 import math 
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
@@ -186,7 +186,7 @@ class WeatherClient:
             logger.error(f"WeatherClient error: {e}")
             return None
 
-    def get_forecast_dataframe(self) -> "pd.DataFrame":
+    def get_forecast_dataframe(self):
         """Returns a full 48h forecast as a pandas DataFrame. Useful for ML feature tables."""
         import pandas as pd
 
