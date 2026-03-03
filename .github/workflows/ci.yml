@@ -1,0 +1,46 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install pandas numpy scipy loguru pytest pytest-cov \
+                      python-dotenv confluent-kafka scikit-learn
+
+      - name: Run linter
+        run: |
+          pip install ruff
+          ruff check data_generator/ ingestion/ --ignore E501
+
+      - name: Run tests
+        run: |
+          pytest tests/test_simulators.py -v --tb=short \
+                 --cov=data_generator --cov-report=term-missing
+
+      - name: Smoke test simulators
+        run: |
+          python -c "
+          from data_generator.server_simulator import ServerSimulator
+          from datetime import datetime, timezone
+          sim = ServerSimulator(num_servers=10, num_racks=2)
+          snap = sim.generate_snapshot(datetime.now(timezone.utc))
+          assert len(snap) == 10
+          print('Simulator smoke test passed')
+          "
