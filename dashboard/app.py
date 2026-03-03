@@ -212,9 +212,9 @@ elif page == "🖥️ Server Telemetry":
     # Anomalies table
     st.subheader("🚨 Active Anomalies")
     anomalies = df_latest[df_latest['is_anomaly']].sort_values(
-        'cpu_temp_c', ascending=False
-    )[['server_id', 'rack_id', 'cpu_temp_c', 'power_draw_w',
-       'cpu_utilization', 'cooling_state', 'fault_type']].head(20)
+    'cpu_temp_c', ascending=False
+)[['server_id', 'rack_id', 'cpu_temp_c', 'power_draw_w',
+   'cpu_utilization', 'cooling_state']].head(20)
 
     if len(anomalies) > 0:
         st.dataframe(anomalies.style.background_gradient(
