@@ -728,7 +728,8 @@ elif page == "④ Droop Control":
         palette = [ACCENT_CYAN, ACCENT_GREEN, ACCENT_AMBER, ACCENT_PURPLE,
                    ACCENT_RED, "#FF9FF3", "#54A0FF", "#5F27CD"]
         for j, inv_id in enumerate(df_gfm["inverter_id"].unique()):
-            sub = df_gfm[df_gfm["inverter_id"] == inv_id].sample(min(300, len(df_gfm)))
+            sub = df_gfm[df_gfm["inverter_id"] == inv_id]
+            sub = sub.sample(min(300, len(sub)))
             fig.add_trace(go.Scatter(
                 x=sub["output_active_power_kw"], y=sub["output_frequency_hz"],
                 mode="markers", name=inv_id,
@@ -744,7 +745,8 @@ elif page == "④ Droop Control":
         section("📉", "Q/V Droop Characteristic", "REACTIVE POWER vs VOLTAGE")
         fig2 = go.Figure()
         for j, inv_id in enumerate(df_gfm["inverter_id"].unique()):
-            sub = df_gfm[df_gfm["inverter_id"] == inv_id].sample(min(300, len(df_gfm)))
+            sub = df_gfm[df_gfm["inverter_id"] == inv_id]
+            sub = sub.sample(min(300, len(sub)))
             fig2.add_trace(go.Scatter(
                 x=sub["output_reactive_power_kvar"], y=sub["voltage_deviation_pu"],
                 mode="markers", name=inv_id,
