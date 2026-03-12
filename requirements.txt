@@ -53,6 +53,8 @@ sqlalchemy==2.0.31
 # Data Quality
 great-expectations==0.18.19
 pandera==0.19.3
+shap==0.45.0
+requests==2.31.0
 
 # Visualization
 plotly==5.22.0

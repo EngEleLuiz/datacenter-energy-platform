@@ -33,6 +33,26 @@ from data_generator.ups_inverter_simulator import (
     NOMINAL_FREQ_HZ, NOMINAL_VOLTAGE_V,
     IEEE1547_ROCOF_LIMIT, IEEE519_THD_LIMIT_PCT,
 )
+import sys
+import os
+try:
+    from analysis.stability_analysis import (
+        compute_stability_metrics, scr_sweep_metrics,
+        make_bode_figure, make_nyquist_figure,
+        make_pm_vs_scr_figure, make_middlebrook_figure,
+        make_gain_margin_figure, get_stability_summary_text,
+    )
+    STABILITY_AVAILABLE = True
+except ImportError:
+    STABILITY_AVAILABLE = False
+
+try:
+    from data_generator.external_data_fetcher import (
+        ExternalDataFetcher, EXTERNAL_FEATURE_COLS,
+    )
+    EXTERNAL_AVAILABLE = True
+except ImportError:
+    EXTERNAL_AVAILABLE = False
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -218,6 +238,9 @@ with st.sidebar:
         "③ Harmonics",
         "④ Droop Control",
         "⑤ Weak-Grid Stability",
+        "⑥ SHAP Explainability",
+        "⑦ Clima & Preço Energia",
+        "⑧ Bode / Nyquist",
     ], label_visibility="collapsed")
 
     st.markdown("---")
@@ -908,3 +931,539 @@ elif page == "⑤ Weak-Grid Stability":
     fig2.update_layout(barmode="stack", **PLOTLY_THEME, height=240,
                        xaxis_title="Inverter", yaxis_title="% of Time")
     st.plotly_chart(fig2, use_container_width=True)
+# ════════════════════════════════════════════════════════════════════════════
+# PAGE ⑥ — SHAP EXPLAINABILITY
+# ════════════════════════════════════════════════════════════════════════════
+elif page == "⑥ SHAP Explainability":
+    ACCENT_CYAN  = "#00D4FF"
+    ACCENT_GREEN = "#00FF9F"
+    ACCENT_RED   = "#FF4757"
+    ACCENT_AMBER = "#FFB020"
+    TEXT_MUTED   = "#64748B"
+    CARD_BORDER  = "#1F2937"
+
+    st.markdown(f"""
+    <div style="margin-bottom:20px">
+        <div style="font-family:\'Syne\',sans-serif;font-size:1.4rem;font-weight:800;color:{ACCENT_CYAN}">
+            ⑥ SHAP Explainability — Why does the model flag an anomaly?
+        </div>
+        <div style="font-size:0.72rem;color:{TEXT_MUTED};margin-top:4px">
+            SHapley Additive exPlanations — each prediction explained by individual feature
+            contributions, grounded in cooperative game theory (Shapley Values).
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    try:
+        import shap
+        import pickle, json
+        SHAP_OK = True
+    except ImportError:
+        SHAP_OK = False
+
+    if not SHAP_OK:
+        st.error("⚠️  Package `shap` not installed. Run: `pip install shap`")
+        st.code("pip install shap", language="bash")
+        st.stop()
+
+    @st.cache_resource(show_spinner="Loading model and computing SHAP values…")
+    def load_shap_explainer():
+        try:
+            with open("ml/anomaly_model.pkl",  "rb") as f: model  = pickle.load(f)
+            with open("ml/anomaly_scaler.pkl", "rb") as f: scaler = pickle.load(f)
+            with open("ml/anomaly_features.json")    as f: feats  = json.load(f)
+            feat_cols = feats if isinstance(feats, list) else feats.get("features", [])
+            explainer = shap.TreeExplainer(model, feature_perturbation="interventional")
+            return model, scaler, feat_cols, explainer
+        except FileNotFoundError:
+            return None, None, None, None
+
+    model, scaler, feat_cols, shap_exp = load_shap_explainer()
+
+    if model is None:
+        st.warning("Models not found in ml/. Run notebook 02 first.")
+        st.stop()
+
+    @st.cache_data(ttl=60, show_spinner="Generating server snapshots…")
+    def get_shap_data(_r):
+        from data_generator.server_simulator import ServerSimulator
+        import pandas as pd
+        from dataclasses import asdict
+        from datetime import datetime, timezone, timedelta
+
+        sim  = ServerSimulator(num_servers=100, num_racks=10,
+                               fault_probability=0.08, random_seed=None)
+        rows = []
+        for i in range(48):
+            ts = datetime.now(timezone.utc) - timedelta(minutes=5 * i)
+            rows.extend([asdict(r) for r in sim.generate_snapshot(ts)])
+        return pd.DataFrame(rows)
+
+    df_shap_raw = get_shap_data(refresh)
+
+    available_feats = [f for f in feat_cols if f in df_shap_raw.columns]
+    X_sample = df_shap_raw[available_feats].dropna()
+    if len(X_sample) > 300:
+        X_sample = X_sample.sample(300, random_state=42)
+
+    X_scaled = scaler.transform(X_sample[available_feats])
+    scores   = model.predict_proba(X_scaled)[:, 1]
+    X_sample = X_sample.copy()
+    X_sample["anomaly_score"] = scores
+    X_sample["is_anomaly"]    = (scores >= 0.34).astype(int)
+
+    # ── KPIs ──────────────────────────────────────────────────────────────
+    c1, c2, c3, c4 = st.columns(4)
+    n_anom = int((scores >= 0.34).sum())
+    n_high = int((scores >= 0.65).sum())
+    mean_sc = float(scores.mean())
+    max_sc  = float(scores.max())
+
+    with c1: kpi("Samples Analyzed",    str(len(X_sample)), "servers")
+    with c2: kpi("Anomalies Detected",  str(n_anom), "threshold=0.34",
+                 "red" if n_anom > 0 else "")
+    with c3: kpi("Max Score",           f"{max_sc:.3f}", "most critical server",
+                 "red" if max_sc > 0.65 else "amber")
+    with c4: kpi("Mean Score",          f"{mean_sc:.3f}", "fleet average")
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ── Global SHAP ───────────────────────────────────────────────────────
+    section("📊", "Global Feature Importance", "MEAN |SHAP VALUE|")
+
+    import hashlib
+    hash_key = hashlib.md5(X_scaled.tobytes()).hexdigest()[:8]
+
+    @st.cache_data(ttl=60, show_spinner="Computing SHAP values…")
+    def compute_shap_global(key):
+        sv = shap_exp.shap_values(X_scaled)
+        if isinstance(sv, list): sv = sv[1]
+        return sv
+
+    sv_all   = compute_shap_global(hash_key)
+    mean_abs = pd.Series(
+        np.abs(sv_all).mean(axis=0),
+        index=available_feats,
+    ).sort_values(ascending=False)
+
+    FEAT_LABELS = {
+        "cpu_temp_c":         "CPU Temperature (°C)",
+        "power_draw_w":       "Power Draw (W)",
+        "cpu_utilization":    "CPU Utilization (%)",
+        "memory_utilization": "Memory Utilization (%)",
+        "cpu_temp_roll_mean": "CPU Temp — 10-sample Mean",
+        "power_roll_std":     "Power Draw — Rolling Std",
+        "cpu_util_roll_mean": "CPU Util — 10-sample Mean",
+        "temp_zscore":        "CPU Temp — Z-Score",
+    }
+
+    col1, col2 = st.columns(2)
+    with col1:
+        top12  = mean_abs.head(12).sort_values()
+        labels = [FEAT_LABELS.get(n, n) for n in top12.index]
+        fig_imp = go.Figure(go.Bar(
+            x=top12.values, y=labels, orientation="h",
+            marker=dict(
+                color=top12.values,
+                colorscale=[[0,"#1A3A5C"],[0.5,"#2E75B6"],[1,"#00D4FF"]],
+                line=dict(width=0),
+            ),
+            text=[f"{v:.4f}" for v in top12.values], textposition="outside",
+        ))
+        fig_imp.update_layout(
+            height=400, template="plotly_dark",
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            font=dict(family="JetBrains Mono,monospace", color="#F1F5F9", size=10),
+            margin=dict(l=10,r=10,t=30,b=10), xaxis_title="Mean |SHAP|",
+            title="Global Importance",
+        )
+        st.plotly_chart(fig_imp, use_container_width=True)
+
+    with col2:
+        # Simplified beeswarm (SHAP value scatter colored by feature value)
+        top5 = mean_abs.head(5).index.tolist()
+        fig_bee = go.Figure()
+        for j, feat in enumerate(top5):
+            fi      = available_feats.index(feat)
+            sv_col  = sv_all[:, fi]
+            raw_col = X_sample[feat].values[:len(sv_col)]
+            raw_norm= (raw_col - raw_col.min()) / (raw_col.ptp() + 1e-9)
+            fig_bee.add_trace(go.Scatter(
+                x=sv_col,
+                y=[FEAT_LABELS.get(feat, feat)] * len(sv_col)
+                  + np.random.default_rng(j).normal(0, 0.06, len(sv_col)),
+                mode="markers", showlegend=False,
+                marker=dict(size=4, opacity=0.5, color=raw_norm,
+                            colorscale=[[0,"#1A6FAF"],[1,"#FF4757"]]),
+            ))
+        fig_bee.add_vline(x=0, line_color="rgba(255,255,255,0.2)", line_dash="dot")
+        fig_bee.update_layout(
+            height=400, template="plotly_dark",
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            font=dict(family="JetBrains Mono,monospace", color="#F1F5F9", size=10),
+            margin=dict(l=10,r=10,t=30,b=10),
+            xaxis_title="SHAP value", title="Beeswarm — Top 5 Features",
+        )
+        st.plotly_chart(fig_bee, use_container_width=True)
+
+    # ── Individual Explanation ────────────────────────────────────────────
+    section("💧", "Individual Explanation — Waterfall", "SELECT A SERVER")
+
+    srv_scores = df_shap_raw.copy()
+    srv_scores["anomaly_score"] = model.predict_proba(
+        scaler.transform(srv_scores[available_feats].fillna(0))
+    )[:, 1]
+
+    top_srvs = (srv_scores
+                .groupby("server_id")["anomaly_score"]
+                .max()
+                .sort_values(ascending=False)
+                .head(10))
+
+    sel_srv  = st.selectbox("Server", top_srvs.index.tolist(),
+                             format_func=lambda x: f"{x}  (score={top_srvs[x]:.3f})")
+
+    srv_rows  = srv_scores[srv_scores["server_id"] == sel_srv]
+    worst_row = srv_rows.loc[srv_rows["anomaly_score"].idxmax(), available_feats]
+
+    sv_inst = shap_exp.shap_values(scaler.transform(worst_row.values.reshape(1, -1)))
+    if isinstance(sv_inst, list): sv_inst = sv_inst[1]
+    sv_inst = sv_inst[0]
+
+    base_v     = (shap_exp.expected_value[1]
+                  if isinstance(shap_exp.expected_value, (list, np.ndarray))
+                  else shap_exp.expected_value)
+    score_inst = float(srv_rows["anomaly_score"].max())
+
+    sorted_idx  = np.argsort(np.abs(sv_inst))[::-1][:8]
+    feat_names  = [FEAT_LABELS.get(available_feats[i], available_feats[i]) for i in sorted_idx]
+    sv_top      = [float(sv_inst[i]) for i in sorted_idx]
+
+    fig_wf = go.Figure(go.Waterfall(
+        orientation="v",
+        measure=["absolute"] + ["relative"] * len(feat_names) + ["total"],
+        x=["Base"] + feat_names + ["Final Score"],
+        y=[float(base_v)] + sv_top + [score_inst],
+        connector={"line": {"color": "rgba(255,255,255,0.2)"}},
+        increasing={"marker": {"color": ACCENT_RED}},
+        decreasing={"marker": {"color": ACCENT_GREEN}},
+        totals={"marker": {"color": ACCENT_CYAN}},
+        text=[f"{v:.3f}" for v in [float(base_v)] + sv_top + [score_inst]],
+        textposition="outside",
+    ))
+    fig_wf.add_hline(y=0.34, line_dash="dash", line_color=ACCENT_AMBER,
+                     annotation_text="Threshold (0.34)")
+    fig_wf.update_layout(
+        height=360, template="plotly_dark",
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="JetBrains Mono,monospace", color="#F1F5F9", size=11),
+        margin=dict(l=10,r=10,t=30,b=40), showlegend=False,
+        title=f"SHAP Waterfall — {sel_srv} | Score = {score_inst:.3f}",
+    )
+    st.plotly_chart(fig_wf, use_container_width=True)
+
+    risk       = "High" if score_inst >= 0.65 else ("Medium" if score_inst >= 0.34 else "Low")
+    risk_color = ACCENT_RED if risk=="High" else (ACCENT_AMBER if risk=="Medium" else ACCENT_GREEN)
+    top_push   = [available_feats[i] for i in sorted_idx if sv_inst[i] > 0][:3]
+    diag_text  = f"**{risk} risk** — main drivers: {', '.join(FEAT_LABELS.get(f,f) for f in top_push)}"
+    st.markdown(
+        f"<div style=\'padding:12px;background:rgba(0,0,0,0.3);border-left:3px solid {risk_color};"
+        f"border-radius:4px;font-size:0.82rem\'>{diag_text}</div>",
+        unsafe_allow_html=True
+    )
+
+# ════════════════════════════════════════════════════════════════════════════
+# PAGE ⑦ — WEATHER & ENERGY PRICE
+# ════════════════════════════════════════════════════════════════════════════
+elif page == "⑦ Weather & Energy Price":
+    ACCENT_AMBER  = "#FFB020"
+    ACCENT_CYAN   = "#00D4FF"
+    ACCENT_GREEN  = "#00FF9F"
+    ACCENT_PURPLE = "#A855F7"
+    ACCENT_RED    = "#FF4757"
+    TEXT_MUTED    = "#64748B"
+    CARD_BORDER   = "#1F2937"
+
+    st.markdown(f"""
+    <div style="margin-bottom:20px">
+        <div style="font-family:\'Syne\',sans-serif;font-size:1.4rem;font-weight:800;color:{ACCENT_AMBER}">
+            ⑦ External Data Fusion — Weather & Energy Price
+        </div>
+        <div style="font-size:0.72rem;color:{TEXT_MUTED};margin-top:4px">
+            Outdoor temperature, solar irradiance and energy spot price integrated
+            into the multivariate LSTM PUE forecasting model.
+            &nbsp;<b style="color:{ACCENT_AMBER}">Higher temperature = more cooling = higher PUE = higher cost.</b>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    if not EXTERNAL_AVAILABLE:
+        st.error("Module external_data_fetcher not found. Place it in data_generator/.")
+        st.stop()
+
+    @st.cache_data(ttl=300, show_spinner="Fetching external data…")
+    def load_external(_r):
+        fetcher = ExternalDataFetcher(
+            owm_api_key=os.getenv("OWM_API_KEY", ""),
+            lat=-27.60, lon=-48.55,
+        )
+        return fetcher.get_merged_features(hours=48)
+
+    df_ext = load_external(refresh)
+    latest = df_ext.iloc[-1]
+
+    # ── KPIs ──────────────────────────────────────────────────────────────
+    c1, c2, c3, c4, c5 = st.columns(5)
+    with c1: kpi("Outdoor Temp.",     f"{latest.get(\'temp_c\',0):.1f}°C",  "Florianopolis")
+    with c2: kpi("Humidity",          f"{latest.get(\'humidity_pct\',0):.0f}%", "relative humidity")
+    with c3: kpi("Solar Irradiance",  f"{latest.get(\'solar_ghi_wm2\',0):.0f}",
+                 "W/m² (GHI)",
+                 badge="Solar Peak" if latest.get(\'solar_ghi_wm2\',0)>500 else "Low",
+                 badge_type="warn"  if latest.get(\'solar_ghi_wm2\',0)>500 else "ok")
+    with c4: kpi("Energy Price",      f"BRL {latest.get(\'price_brl_mwh\',0):.0f}",
+                 "per MWh (PLD mock)",
+                 badge="Peak Hour" if latest.get(\'is_peak\',0)>0.5 else "Off-peak",
+                 badge_type="err"  if latest.get(\'is_peak\',0)>0.5 else "ok")
+    with c5: kpi("Cooling Factor",    f"{latest.get(\'cooling_load_factor\',0):.2f}",
+                 "0=min, 1=max",
+                 "red" if latest.get(\'cooling_load_factor\',0)>0.7 else "amber")
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ── Time-series charts ────────────────────────────────────────────────
+    section("🌡️", "Temperature & Energy Price — 48h", "TIME SERIES")
+    fig_clim = make_subplots(rows=3, cols=1, shared_xaxes=True,
+                              vertical_spacing=0.05, row_heights=[0.35, 0.35, 0.30])
+
+    fig_clim.add_trace(go.Scatter(
+        x=df_ext["timestamp_utc"], y=df_ext["temp_c"],
+        name="Temperature (°C)", fill="tozeroy",
+        line=dict(color=ACCENT_RED, width=1.5),
+        fillcolor="rgba(255,71,87,0.08)",
+    ), row=1, col=1)
+    fig_clim.add_trace(go.Scatter(
+        x=df_ext["timestamp_utc"], y=df_ext["humidity_pct"],
+        name="Humidity (%)", line=dict(color=ACCENT_CYAN, width=1.2),
+    ), row=1, col=1)
+    fig_clim.add_trace(go.Scatter(
+        x=df_ext["timestamp_utc"], y=df_ext["solar_ghi_wm2"],
+        name="Solar Irradiance (W/m²)", fill="tozeroy",
+        line=dict(color=ACCENT_AMBER, width=1.5),
+        fillcolor="rgba(255,176,32,0.08)",
+    ), row=2, col=1)
+    fig_clim.add_trace(go.Scatter(
+        x=df_ext["timestamp_utc"], y=df_ext["price_brl_mwh"],
+        name="Energy Price (BRL/MWh)", fill="tozeroy",
+        line=dict(color=ACCENT_GREEN, width=1.5),
+        fillcolor="rgba(0,255,159,0.06)",
+    ), row=3, col=1)
+
+    fig_clim.update_layout(
+        height=460, template="plotly_dark",
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="JetBrains Mono,monospace", color="#F1F5F9", size=10),
+        margin=dict(l=10,r=10,t=20,b=10),
+        legend=dict(bgcolor="rgba(0,0,0,0.4)", bordercolor=CARD_BORDER),
+    )
+    fig_clim.update_xaxes(gridcolor=CARD_BORDER)
+    fig_clim.update_yaxes(gridcolor=CARD_BORDER)
+    fig_clim.update_yaxes(title_text="Temp./Humidity", row=1, col=1)
+    fig_clim.update_yaxes(title_text="W/m²",           row=2, col=1)
+    fig_clim.update_yaxes(title_text="BRL/MWh",        row=3, col=1)
+    st.plotly_chart(fig_clim, use_container_width=True)
+
+    # ── Correlation analysis ──────────────────────────────────────────────
+    section("🔗", "Correlation: Temperature × Cooling Load", "DEPENDENCY ANALYSIS")
+    col1, col2 = st.columns(2)
+    with col1:
+        fig_corr = go.Figure(go.Scatter(
+            x=df_ext["temp_c"], y=df_ext["cooling_load_factor"], mode="markers",
+            marker=dict(
+                color=df_ext["price_brl_mwh"],
+                colorscale=[[0,ACCENT_CYAN],[0.5,ACCENT_AMBER],[1,ACCENT_RED]],
+                size=5, opacity=0.5,
+                colorbar=dict(title="BRL/MWh", thickness=10),
+            ),
+        ))
+        fig_corr.update_layout(
+            height=300, template="plotly_dark",
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            font=dict(family="JetBrains Mono,monospace", color="#F1F5F9", size=10),
+            margin=dict(l=10,r=10,t=30,b=10),
+            xaxis_title="Outdoor Temperature (°C)",
+            yaxis_title="Cooling Load Factor",
+            title="Temp × Cooling (color = energy price)",
+        )
+        st.plotly_chart(fig_corr, use_container_width=True)
+
+    with col2:
+        # Average hourly price profile
+        df_ext["hour"] = df_ext["timestamp_utc"].dt.hour
+        price_hourly   = df_ext.groupby("hour")["price_brl_mwh"].mean()
+        fig_hp = go.Figure(go.Bar(
+            x=price_hourly.index, y=price_hourly.values,
+            marker=dict(
+                color=price_hourly.values,
+                colorscale=[[0,ACCENT_CYAN],[0.5,ACCENT_AMBER],[1,ACCENT_RED]],
+                line=dict(width=0),
+            ),
+        ))
+        fig_hp.add_hline(y=price_hourly.mean(), line_dash="dash",
+                         line_color="rgba(255,255,255,0.3)",
+                         annotation_text="Daily average")
+        fig_hp.update_layout(
+            height=300, template="plotly_dark",
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            font=dict(family="JetBrains Mono,monospace", color="#F1F5F9", size=10),
+            margin=dict(l=10,r=10,t=30,b=10),
+            xaxis_title="Hour of day", yaxis_title="BRL/MWh",
+            title="Average Hourly Energy Price Profile",
+        )
+        st.plotly_chart(fig_hp, use_container_width=True)
+
+    # ── Cyclical features ─────────────────────────────────────────────────
+    section("📐", "Cyclical Time Features for LSTM", "sin/cos ENCODING")
+    fig_cyc = go.Figure()
+    fig_cyc.add_trace(go.Scatter(
+        x=df_ext["timestamp_utc"], y=df_ext["time_sin"],
+        name="sin(hour)", line=dict(color=ACCENT_CYAN, width=1.5),
+    ))
+    fig_cyc.add_trace(go.Scatter(
+        x=df_ext["timestamp_utc"], y=df_ext["time_cos"],
+        name="cos(hour)", line=dict(color=ACCENT_PURPLE, width=1.5),
+    ))
+    fig_cyc.add_trace(go.Scatter(
+        x=df_ext["timestamp_utc"], y=df_ext["is_peak"],
+        name="Peak Hour Flag", line=dict(color=ACCENT_RED, width=1, dash="dot"),
+    ))
+    fig_cyc.update_layout(
+        height=240, template="plotly_dark",
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="JetBrains Mono,monospace", color="#F1F5F9", size=10),
+        margin=dict(l=10,r=10,t=20,b=10),
+        xaxis_title="Time", yaxis_title="Value",
+    )
+    st.plotly_chart(fig_cyc, use_container_width=True)
+# ════════════════════════════════════════════════════════════════════════════
+# PAGE ⑧ — BODE / NYQUIST
+# ════════════════════════════════════════════════════════════════════════════
+elif page == "⑧ Bode / Nyquist":
+    ACCENT_RED   = "#FF4757"
+    ACCENT_GREEN = "#00FF9F"
+    ACCENT_CYAN  = "#00D4FF"
+    ACCENT_AMBER = "#FFB020"
+    TEXT_MUTED   = "#64748B"
+    CARD_BORDER  = "#1F2937"
+
+    st.markdown(f"""
+    <div style="margin-bottom:20px">
+        <div style="font-family:\'Syne\',sans-serif;font-size:1.4rem;font-weight:800;color:{ACCENT_RED}">
+            ⑧ Frequency-Domain Stability Analysis
+        </div>
+        <div style="font-size:0.72rem;color:{TEXT_MUTED};margin-top:4px">
+            Bode and Nyquist diagrams of the GFL PLL control loop and Middlebrook Criterion for GFM.
+            &nbsp;<b style="color:{ACCENT_RED}">Based on classical control theory — phase margin and gain margin.</b>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    if not STABILITY_AVAILABLE:
+        st.error("Module analysis/stability_analysis.py not found.")
+        st.stop()
+
+    # Interactive controls
+    col_c1, col_c2, col_c3 = st.columns(3)
+    with col_c1:
+        scr_sel = st.slider("SCR — Short-Circuit Ratio", 0.5, 12.0, 2.0, 0.1,
+                             help="Short-Circuit Ratio at the point of common coupling")
+    with col_c2:
+        h_sel   = st.slider("H — Virtual Inertia Constant (s)", 1.0, 12.0, 5.0, 0.5,
+                             help="GFM virtual inertia constant (VSM swing equation)")
+    with col_c3:
+        show_gfm = st.checkbox("Show GFM on Bode", value=True)
+
+    # Status card
+    status = get_stability_summary_text(scr_sel)
+    st.markdown(f"""
+    <div style="padding:16px;background:{status[\'bg\']};border:1px solid {status[\'color\']};
+                border-radius:8px;margin-bottom:16px;display:flex;gap:24px;align-items:center">
+        <div style="font-family:\'Syne\',sans-serif;font-size:1.5rem;font-weight:800;color:{status[\'color\']}">
+            {status[\'status\']}
+        </div>
+        <div>
+            <div style="font-size:0.72rem;color:#94A3B8">
+                PM = {status[\'pm_text\']} &nbsp;|&nbsp;
+                GM = {status[\'gm_text\']} &nbsp;|&nbsp;
+                Middlebrook = {status[\'mb_text\']} &nbsp;|&nbsp;
+                {status[\'risk_label\']}
+            </div>
+            <div style="font-size:0.68rem;color:#64748B;margin-top:4px">
+                GFM: ✅ Stable for any SCR value (no PLL dependency)
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Bode Diagram ──────────────────────────────────────────────────────
+    section("📈", "Bode Diagram — Open-Loop PLL", "GFL vs GFM")
+    fig_bode = make_bode_figure(scr_sel, h_sel)
+    st.plotly_chart(fig_bode, use_container_width=True)
+
+    # ── Nyquist + Middlebrook ─────────────────────────────────────────────
+    col_ny, col_mb = st.columns(2)
+    with col_ny:
+        section("🌀", "Nyquist Diagram", "GFL — Complex Plane")
+        fig_ny = make_nyquist_figure(scr_sel)
+        st.plotly_chart(fig_ny, use_container_width=True)
+
+    with col_mb:
+        section("⚖️", "Middlebrook — |Z_grid/Z_inv|", "IMPEDANCE STABILITY MARGIN (dB)")
+        metrics_list = scr_sweep_metrics()
+        fig_mb = make_middlebrook_figure(metrics_list)
+        fig_mb.add_vline(x=scr_sel, line_dash="dot", line_color=ACCENT_AMBER,
+                          annotation_text=f"SCR={scr_sel:.1f}")
+        st.plotly_chart(fig_mb, use_container_width=True)
+
+    # ── Phase Margin vs SCR ───────────────────────────────────────────────
+    section("📉", "SCR Sweep — Phase Margin GFL vs GFM", "FULL COMPARISON")
+    fig_pm = make_pm_vs_scr_figure(metrics_list)
+    fig_pm.add_vline(x=scr_sel, line_dash="dot", line_color=ACCENT_AMBER,
+                      annotation_text=f"Current SCR = {scr_sel:.1f}",
+                      annotation_font_color=ACCENT_AMBER)
+    st.plotly_chart(fig_pm, use_container_width=True)
+
+    # ── Gain Margin ───────────────────────────────────────────────────────
+    section("🔊", "Gain Margin vs SCR", "GFL — FREQUENCY RESPONSE")
+    fig_gm = make_gain_margin_figure(metrics_list)
+    fig_gm.add_vline(x=scr_sel, line_dash="dot", line_color=ACCENT_AMBER)
+    st.plotly_chart(fig_gm, use_container_width=True)
+
+    # ── Metrics table ─────────────────────────────────────────────────────
+    section("📋", "Summary Table — SCR × Stability Metrics", "COMPUTED VALUES")
+    scr_table = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 7.0, 10.0]
+    rows_data = []
+    for s in scr_table:
+        m = compute_stability_metrics(s)
+        rows_data.append({
+            "SCR":              s,
+            "PM GFL (°)":       f"{m.gfl_pm_deg:.1f}",
+            "GM GFL (dB)":      f"{m.gfl_gm_db:.1f}",
+            "Middlebrook (dB)": f"{m.middlebrook_db:.1f}",
+            "GFL Status":       ("✅ Stable"   if m.gfl_stable
+                                 else ("⚠️ Marginal" if m.risk_label=="marginal"
+                                       else "❌ Unstable")),
+            "GFM Status":       "✅ Stable",
+        })
+    df_table = pd.DataFrame(rows_data)
+    st.dataframe(
+        df_table.style.apply(
+            lambda row: [
+                "" if col != "GFL Status"
+                else ("background-color:#1E3A1E" if "✅" in str(row[col])
+                      else ("background-color:#3A2E1E" if "⚠️" in str(row[col])
+                            else "background-color:#3A1E1E"))
+                for col in df_table.columns
+            ], axis=1
+        ),
+        use_container_width=True, hide_index=True,
+    )
