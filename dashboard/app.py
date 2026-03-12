@@ -239,7 +239,7 @@ with st.sidebar:
         "④ Droop Control",
         "⑤ Weak-Grid Stability",
         "⑥ SHAP Explainability",
-        "⑦ Clima & Preço Energia",
+        "⑦ Weather & Energy Price",
         "⑧ Bode / Nyquist",
     ], label_visibility="collapsed")
 
@@ -1388,7 +1388,7 @@ elif page == "⑧ Bode / Nyquist":
         show_gfm = st.checkbox("Show GFM on Bode", value=True)
 
     # Status card
-    status = get_stability_summary_text(scr_sel)
+    status   = get_stability_summary_text(scr_sel)
     _s_bg    = status["bg"]
     _s_color = status["color"]
     _s_stat  = status["status"]
