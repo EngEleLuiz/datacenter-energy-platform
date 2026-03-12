@@ -1213,20 +1213,25 @@ elif page == "⑦ Weather & Energy Price":
     latest = df_ext.iloc[-1]
 
     # ── KPIs ──────────────────────────────────────────────────────────────
+    # Pre-extract values — f-strings don't allow backslashes before Python 3.12
+    _temp     = latest.get("temp_c", 0)
+    _humidity = latest.get("humidity_pct", 0)
+    _solar    = latest.get("solar_ghi_wm2", 0)
+    _price    = latest.get("price_brl_mwh", 0)
+    _is_peak  = latest.get("is_peak", 0)
+    _cooling  = latest.get("cooling_load_factor", 0)
+
     c1, c2, c3, c4, c5 = st.columns(5)
-    with c1: kpi("Outdoor Temp.",     f"{latest.get(\'temp_c\',0):.1f}°C",  "Florianopolis")
-    with c2: kpi("Humidity",          f"{latest.get(\'humidity_pct\',0):.0f}%", "relative humidity")
-    with c3: kpi("Solar Irradiance",  f"{latest.get(\'solar_ghi_wm2\',0):.0f}",
-                 "W/m² (GHI)",
-                 badge="Solar Peak" if latest.get(\'solar_ghi_wm2\',0)>500 else "Low",
-                 badge_type="warn"  if latest.get(\'solar_ghi_wm2\',0)>500 else "ok")
-    with c4: kpi("Energy Price",      f"BRL {latest.get(\'price_brl_mwh\',0):.0f}",
-                 "per MWh (PLD mock)",
-                 badge="Peak Hour" if latest.get(\'is_peak\',0)>0.5 else "Off-peak",
-                 badge_type="err"  if latest.get(\'is_peak\',0)>0.5 else "ok")
-    with c5: kpi("Cooling Factor",    f"{latest.get(\'cooling_load_factor\',0):.2f}",
-                 "0=min, 1=max",
-                 "red" if latest.get(\'cooling_load_factor\',0)>0.7 else "amber")
+    with c1: kpi("Outdoor Temp.",    f"{_temp:.1f}°C",    "Florianopolis")
+    with c2: kpi("Humidity",         f"{_humidity:.0f}%", "relative humidity")
+    with c3: kpi("Solar Irradiance", f"{_solar:.0f}",     "W/m² (GHI)",
+                 badge="Solar Peak" if _solar > 500 else "Low",
+                 badge_type="warn"  if _solar > 500 else "ok")
+    with c4: kpi("Energy Price",     f"BRL {_price:.0f}", "per MWh (PLD mock)",
+                 badge="Peak Hour" if _is_peak > 0.5 else "Off-peak",
+                 badge_type="err"  if _is_peak > 0.5 else "ok")
+    with c5: kpi("Cooling Factor",   f"{_cooling:.2f}",   "0=min, 1=max",
+                 "red" if _cooling > 0.7 else "amber")
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -1384,18 +1389,25 @@ elif page == "⑧ Bode / Nyquist":
 
     # Status card
     status = get_stability_summary_text(scr_sel)
+    _s_bg    = status["bg"]
+    _s_color = status["color"]
+    _s_stat  = status["status"]
+    _s_pm    = status["pm_text"]
+    _s_gm    = status["gm_text"]
+    _s_mb    = status["mb_text"]
+    _s_risk  = status["risk_label"]
     st.markdown(f"""
-    <div style="padding:16px;background:{status[\'bg\']};border:1px solid {status[\'color\']};
+    <div style="padding:16px;background:{_s_bg};border:1px solid {_s_color};
                 border-radius:8px;margin-bottom:16px;display:flex;gap:24px;align-items:center">
-        <div style="font-family:\'Syne\',sans-serif;font-size:1.5rem;font-weight:800;color:{status[\'color\']}">
-            {status[\'status\']}
+        <div style="font-family:'Syne',sans-serif;font-size:1.5rem;font-weight:800;color:{_s_color}">
+            {_s_stat}
         </div>
         <div>
             <div style="font-size:0.72rem;color:#94A3B8">
-                PM = {status[\'pm_text\']} &nbsp;|&nbsp;
-                GM = {status[\'gm_text\']} &nbsp;|&nbsp;
-                Middlebrook = {status[\'mb_text\']} &nbsp;|&nbsp;
-                {status[\'risk_label\']}
+                PM = {_s_pm} &nbsp;|&nbsp;
+                GM = {_s_gm} &nbsp;|&nbsp;
+                Middlebrook = {_s_mb} &nbsp;|&nbsp;
+                {_s_risk}
             </div>
             <div style="font-size:0.68rem;color:#64748B;margin-top:4px">
                 GFM: ✅ Stable for any SCR value (no PLL dependency)

@@ -87,7 +87,8 @@ This platform bridges **data engineering** and **power systems research** by bui
 | Model | Algorithm | Target | Key Metrics |
 |---|---|---|---|
 | Anomaly Detection | Random Forest + Isolation Forest | Server faults (thermal, power, zombie) | AUC=0.93 · F1=0.83 · Threshold=0.34 |
-| PUE Forecasting | LSTM (2-layer, hidden=64) | Datacenter PUE, 1-hour horizon | MAE=0.000126 · MAPE=0.013% |
+| PUE Forecasting (baseline) | LSTM (2-layer, hidden=64) | Datacenter PUE, 1-hour horizon | MAE=0.000126 · MAPE=0.013% |
+| PUE Forecasting (multivariate) | LSTM + Temporal Attention (20 features, hidden=128) | PUE with weather + energy price fusion | MAE, RMSE, R² logged via MLflow |
 | GFL/GFM Classifier | Random Forest (multiclass) | GFL / GFM / Transitioning | AUC=0.98 · CV F1=0.69 |
 
 ### Model Design Decisions
@@ -167,9 +168,9 @@ jupyter lab
 
 Run notebooks in order:
 1. `notebooks/01_eda_datacenter.ipynb` — Exploratory Data Analysis
-2. `notebooks/02_anomaly_detection.ipynb` — Anomaly Detection (RF + IF)
+2. `notebooks/02_anomaly_detection.ipynb` — Anomaly Detection (RF + IF) + SHAP
 3. `notebooks/03_gfm_gfl_classifier.ipynb` — Inverter Mode Classification
-4. `notebooks/04_pue_forecasting.ipynb` — LSTM PUE Forecasting
+4. `notebooks/04_pue_forecasting.ipynb` — Baseline LSTM + Multivariate LSTM with external data
 
 ### 5. Run tests
 
@@ -185,47 +186,74 @@ pytest tests/test_simulators.py -v
 datacenter-energy-platform/
 │
 ├── data_generator/
-│   ├── server_simulator.py       # 100-server telemetry with fault injection
-│   ├── ups_inverter_simulator.py # UPS + GFL/GFM inverter dynamics
-│   └── weather_api.py            # Open-Meteo API (Florianópolis, SC)
+│   ├── server_simulator.py          # 100-server telemetry with fault injection
+│   ├── ups_inverter_simulator.py    # UPS + GFL/GFM inverter dynamics (VSM, black-start,
+│   │                                #   harmonics, droop, weak-grid)
+│   ├── weather_api.py               # Open-Meteo API (Florianópolis, SC)
+│   └── external_data_fetcher.py     # Weather + solar irradiance + energy price (CCEE PLD)
+│                                    #   fused into multivariate LSTM features  ← NEW
+│
+├── analysis/
+│   ├── __init__.py
+│   ├── stability_analysis.py        # Bode / Nyquist / Middlebrook criterion, PM & GM
+│   │                                #   vs SCR sweep for GFL vs GFM  ← NEW
+│   └── shap_explainer.py            # SHAP TreeExplainer wrapper, waterfall/beeswarm
+│                                    #   figures, auto-diagnosis engine  ← NEW
 │
 ├── ingestion/
-│   └── kafka_producer.py         # Streams all simulators to Kafka
+│   └── kafka_producer.py            # Streams all simulators to Kafka
 │
 ├── airflow_dags/
-│   └── datacenter_pipeline.py    # Bronze→Silver→Gold ETL + drift detection
+│   └── datacenter_pipeline.py       # Bronze→Silver→Gold ETL + drift detection
 │
 ├── ml/
-│   ├── anomaly_model.pkl         # Trained anomaly detector
-│   ├── gfm_classifier.pkl        # Trained GFL/GFM classifier
-│   ├── pue_lstm_best.pt          # Trained LSTM weights (PyTorch)
-│   └── *.json                    # Feature configs
+│   ├── anomaly_model.pkl            # Anomaly detector (Random Forest)
+│   ├── anomaly_scaler.pkl
+│   ├── anomaly_features.json
+│   ├── gfm_classifier.pkl           # GFL/GFM classifier (Random Forest)
+│   ├── gfm_scaler.pkl
+│   ├── gfm_label_encoder.pkl
+│   ├── gfm_features.json
+│   ├── pue_lstm_best.pt             # Baseline LSTM weights (8 features, hidden=64)
+│   ├── pue_feat_scaler.pkl
+│   ├── pue_tgt_scaler.pkl
+│   ├── pue_config.json
+│   ├── pue_lstm_multivariate_best.pt  # Multivariate LSTM (20 features, attention) ← NEW
+│   ├── pue_feat_scaler_mv.pkl         ← NEW
+│   ├── pue_tgt_scaler_mv.pkl          ← NEW
+│   └── pue_config_mv.json             ← NEW
 │
 ├── notebooks/
 │   ├── 01_eda_datacenter.ipynb
-│   ├── 02_anomaly_detection.ipynb
+│   ├── 02_anomaly_detection.ipynb     # + SHAP explainability cells  ← UPDATED
 │   ├── 03_gfm_gfl_classifier.ipynb
-│   └── 04_pue_forecasting.ipynb
+│   └── 04_pue_forecasting.ipynb       # + Multivariate LSTM cells    ← UPDATED
 │
 ├── dashboard/
-│   └── app.py                    # Streamlit multi-page dashboard
+│   └── app.py                         # 8-page Streamlit dashboard    ← UPDATED
+│                                      #   ① Virtual Inertia  ② Black-Start
+│                                      #   ③ Harmonics  ④ Droop  ⑤ Weak-Grid
+│                                      #   ⑥ SHAP Explainability  ← NEW
+│                                      #   ⑦ Weather & Energy Price  ← NEW
+│                                      #   ⑧ Bode / Nyquist  ← NEW
 │
 ├── infra/
-│   ├── main.tf                   # AWS S3, Glue, Athena, IAM, CloudWatch
-│   └── variables.tf
+│   ├── main.tf                        # AWS S3, Glue, Athena, IAM, CloudWatch
+│   ├── variables.tf
+│   └── outputs.tf
 │
 ├── tests/
-│   └── test_simulators.py        # 15 unit tests (pytest)
+│   └── test_simulators.py             # 15 unit tests (pytest)
 │
 ├── docker/
-│   ├── postgres-init.sh          # Creates airflow/mlflow/datacenter_gold DBs
+│   ├── postgres-init.sh               # Creates airflow/mlflow/datacenter_gold DBs
 │   └── Dockerfile.streamlit
 │
 ├── docker-compose.yml
 ├── requirements.txt
 ├── .env
 ├── .pre-commit-config.yaml
-└── .github/workflows/ci.yml      # GitHub Actions: lint + pytest + smoke tests
+└── .github/workflows/ci.yml           # GitHub Actions: lint + pytest + smoke tests
 ```
 
 ---
